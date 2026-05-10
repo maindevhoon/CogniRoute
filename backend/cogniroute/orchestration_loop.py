@@ -23,7 +23,7 @@ from .state_manager import StateManager
 from .telemetry.tracing import now_ms, span_end, span_start, trace_emit
 from .verifier_agent import VerifierAgent
 
-MAX_RETRIES = 2
+MAX_RETRIES = 9
 
 # Type for the streaming event callback.
 EventCallback = Callable[[dict[str, Any]], Coroutine[Any, Any, None]]

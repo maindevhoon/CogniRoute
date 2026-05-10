@@ -114,7 +114,11 @@ async def call_model(
         max_tokens=ROLE_MAX_TOKENS.get(llm_role, 4096),
     )
     role_base_url = base_url or ROLE_ENDPOINTS[llm_role] or settings.openai_base_url
-    result = await make_client(base_url=role_base_url).call_model(call=call)
     
-    stripped_text = strip_thinking(result.text)
-    return LlmResult(text=stripped_text, meta=result.meta)
+    try:
+        result = await make_client(base_url=role_base_url).call_model(call=call)
+        stripped_text = strip_thinking(result.text)
+        return LlmResult(text=stripped_text, meta=result.meta)
+    except Exception as e:
+        print(f"[{role}] LLM call failed: {type(e).__name__}: {e}")
+        raise
