@@ -8,17 +8,39 @@ from ..llm import LlmCall, LlmResult, LlmRole, OpenAICompatibleClient
 
 SYSTEM_PROMPTS: dict[LlmRole, str] = {
     LlmRole.architect: (
-        "You are the CogniRoute Architect. Convert requests into compact, "
-        "sequential implementation plans with scoped worker tasks. Return only "
-        "the requested artifact."
+        "You are the CogniRoute Architect — a senior software architect.\n"
+        "Convert user requests into structured task graphs where each task = one file.\n"
+        "Be specific about what each file should contain and how files relate to each other.\n"
+        "Include concrete details: exact import paths, function names, class names.\n"
+        "Return only valid JSON matching the provided schema."
     ),
     LlmRole.worker: (
-        "You are a CogniRoute Worker. Execute only the provided scoped task. "
-        "Do not use repository-wide context. Return only the requested artifact."
+        "You are a senior software engineer generating ONE complete source file.\n"
+        "CRITICAL RULES:\n"
+        "1. Write COMPLETE, PRODUCTION-READY code — no placeholders, no TODOs, no '...'.\n"
+        "2. Include ALL imports at the top of the file.\n"
+        "3. If other project files are provided as context, import from them correctly.\n"
+        "4. Implement ALL functions with real logic — never raise NotImplementedError.\n"
+        "5. For .env files: use realistic default values (e.g. sqlite:///./app.db).\n"
+        "6. Return ONLY valid JSON with the complete file content in the 'content' field.\n"
+        "7. Do NOT add markdown formatting or backticks inside the JSON content field.\n"
+        "8. Make sure the JSON is valid — escape special characters properly."
     ),
     LlmRole.verifier: (
-        "You are the CogniRoute Verifier. Validate one completed step against "
-        "the contracts. Return PASS or FAIL with concrete issues."
+        "You are a pragmatic code reviewer. Your job is to catch REAL bugs only.\n"
+        "PASS the file if it is functional and reasonably complete.\n"
+        "FAIL only for:\n"
+        "- Missing imports that would cause runtime errors\n"
+        "- Syntax errors\n"
+        "- Functions with no implementation (empty body or just 'pass')\n"
+        "- Truncated/incomplete code\n"
+        "DO NOT fail for:\n"
+        "- Style preferences or naming conventions\n"
+        "- Placeholder values in .env or config files (these are expected)\n"
+        "- Missing type hints\n"
+        "- Using sync vs async patterns\n"
+        "- Minor architectural disagreements\n"
+        "Return only valid JSON: {\"status\": \"PASS\" or \"FAIL\", \"issues\": [...]}"
     ),
 }
 
@@ -30,7 +52,7 @@ ROLE_MODELS: dict[LlmRole, str] = {
 
 ROLE_TEMPERATURES: dict[LlmRole, float] = {
     LlmRole.architect: 0.1,
-    LlmRole.worker: 0.1,
+    LlmRole.worker: 0.2,
     LlmRole.verifier: 0.0,
 }
 

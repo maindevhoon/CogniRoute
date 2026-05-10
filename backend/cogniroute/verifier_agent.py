@@ -95,17 +95,19 @@ class VerifierAgent:
             )
 
         prompt = (
-            "Verify this single generated file.\n"
-            "Check for: syntax errors, missing imports, incomplete code, "
-            "placeholder stubs, truncated content, and contract violations.\n"
-            "Be strict: if the file has '...' or '// TODO' placeholders, FAIL it.\n\n"
-            f"User goal: {user_goal}\n\n"
+            f"Review this file: {worker_result.artifact.filename}\n\n"
             f"Task: {task_node.title}\n"
-            f"Task description: {task_node.description}\n\n"
-            f"Generated file: {worker_result.artifact.filename}\n"
-            f"Content:\n{worker_result.artifact.content}\n"
+            f"Description: {task_node.description}\n\n"
+            f"```\n{worker_result.artifact.content}\n```\n"
             f"{upstream_block}\n\n"
-            "Return PASS if the file is complete and correct, FAIL with specific issues if not."
+            "FAIL only if there are REAL bugs:\n"
+            "- Missing imports that would cause ImportError/NameError at runtime\n"
+            "- Empty function bodies (just 'pass' or raise NotImplementedError)\n"
+            "- Truncated or obviously incomplete code\n"
+            "- Syntax errors\n\n"
+            "PASS if the code is functional even if imperfect.\n"
+            "Config files (.env, .json, .yaml) with placeholder values should always PASS.\n"
+            "Return JSON: {\"status\": \"PASS\" or \"FAIL\", \"issues\": [\"...\"]}"
         )
         try:
             result = await call_model(

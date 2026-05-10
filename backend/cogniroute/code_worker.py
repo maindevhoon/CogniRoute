@@ -71,33 +71,34 @@ class CodeWorker:
         if upstream_code:
             parts = []
             for fname, code in upstream_code.items():
-                parts.append(f"--- {fname} ---\n{code}\n")
+                parts.append(f"### FILE: {fname}\n```\n{code}\n```")
             upstream_block = (
-                "\n\nAlready generated files (use as context, do not reproduce):\n"
-                + "\n".join(parts)
+                "\n\n## EXISTING PROJECT FILES (import from these, match their interfaces):\n"
+                + "\n\n".join(parts)
             )
 
         retry_block = ""
         if retry_issues:
             retry_block = (
-                "\n\nThe verifier rejected your previous attempt. Fix these issues:\n"
-                + "\n".join(f"- {issue}" for issue in retry_issues)
-                + "\n\nGenerate the CORRECTED file."
+                "\n\n## RETRY — YOUR PREVIOUS CODE WAS REJECTED. FIX THESE ISSUES:\n"
+                + "\n".join(f"  ❌ {issue}" for issue in retry_issues)
+                + "\n\nGenerate the COMPLETE CORRECTED file from scratch. Do not explain — just return the fixed JSON."
             )
 
         prompt = (
-            "You are generating ONE file for a software project.\n"
-            "Return ONLY valid JSON matching the schema hint.\n"
-            "The 'content' field must contain the COMPLETE file source code.\n"
-            "Do not truncate, abbreviate, or use placeholders like '...' or '// rest of code'.\n\n"
-            f"Task ID: {ctx.node.id}\n"
-            f"Task title: {ctx.node.title}\n"
-            f"Task description: {ctx.node.description}\n\n"
-            f"User goal:\n{ctx.user_goal}\n\n"
-            f"Scoped plan section:\n{ctx.plan_section_markdown}\n\n"
-            f"Contracts:\n{contracts_markdown}\n"
+            f"Generate the file: {ctx.node.outputs_schema.get('filename', ctx.node.title)}\n\n"
+            f"## TASK\n"
+            f"ID: {ctx.node.id}\n"
+            f"Title: {ctx.node.title}\n"
+            f"Description: {ctx.node.description}\n\n"
+            f"## USER GOAL\n{ctx.user_goal}\n"
             f"{upstream_block}"
-            f"{retry_block}"
+            f"{retry_block}\n\n"
+            "## INSTRUCTIONS\n"
+            "- Write the COMPLETE file. Every function must have a real implementation.\n"
+            "- Include all necessary imports.\n"
+            "- If upstream files define classes/functions, import and use them.\n"
+            "- Return ONLY valid JSON matching the schema hint."
         )
         try:
             result = await call_model(
