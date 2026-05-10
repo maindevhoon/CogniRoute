@@ -83,7 +83,6 @@ export default function HomePage() {
         setStatusMsg(`Architect planned ${evt.files.length} files`);
         addTrace(`📋 Planned ${evt.files.length} files: ${evt.files.map((f: any) => f.filename).join(", ")}`, "plan");
         setFiles(evt.files.map((f: any) => ({ nodeId: f.node_id, filename: f.filename, content: "", status: "pending" as const })));
-        setActiveTab("code");
         break;
 
       case "reasoning":
