@@ -55,12 +55,14 @@ class CodeWorker:
         contracts_markdown: str,
         upstream_code: dict[str, str],
         retry_issues: list[str] | None = None,
+        architecture: str = "",
     ) -> WorkerResult:
         model_result = await self._run_model(
             ctx=ctx,
             contracts_markdown=contracts_markdown,
             upstream_code=upstream_code,
             retry_issues=retry_issues,
+            architecture=architecture,
         )
         if model_result is not None:
             return model_result
@@ -84,6 +86,7 @@ class CodeWorker:
         contracts_markdown: str,
         upstream_code: dict[str, str],
         retry_issues: list[str] | None = None,
+        architecture: str = "",
     ) -> WorkerResult | None:
         # Load domain-specific skill.
         skill = _load_skill(ctx.node.worker_type.value)
@@ -108,8 +111,13 @@ class CodeWorker:
                 + "\n\nGenerate the COMPLETE CORRECTED file from scratch. Do not explain — just return the fixed JSON."
             )
 
+        arch_block = ""
+        if architecture:
+            arch_block = f"## ARCHITECTURE CONTEXT (how your file fits in the system)\n{architecture}\n\n"
+
         prompt = (
             f"{skill_block}"
+            f"{arch_block}"
             f"Generate the file: {ctx.node.outputs_schema.get('filename', ctx.node.title)}\n\n"
             f"## TASK\n"
             f"ID: {ctx.node.id}\n"
@@ -122,6 +130,7 @@ class CodeWorker:
             "- Write the COMPLETE file. Every function must have a real implementation.\n"
             "- Include all necessary imports.\n"
             "- If upstream files define classes/functions, import and use them.\n"
+            "- Follow the architecture context above for naming, API paths, and data models.\n"
             "- Return ONLY valid JSON matching the schema hint."
         )
         try:

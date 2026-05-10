@@ -32,7 +32,7 @@ class StateManager:
         self.paths = paths or StatePaths.default()
         self.paths.root_dir.mkdir(parents=True, exist_ok=True)
 
-    def create_implementation_plan(self, *, user_request: str, task_graph: TaskGraph) -> str:
+    def create_implementation_plan(self, *, user_request: str, task_graph: TaskGraph, architecture: str = "") -> str:
         """Generate a multi-section implementation plan from the task graph."""
         # Group file tasks by section.
         sections: dict[str, list] = {}
@@ -48,6 +48,13 @@ class StateManager:
             f"User request: {user_request}",
             "",
         ]
+
+        # Include architecture reasoning if available.
+        if architecture:
+            lines.append("## Architecture")
+            lines.append("")
+            lines.append(architecture)
+            lines.append("")
 
         for section_name, nodes in sections.items():
             lines.append(f"## {section_name}")

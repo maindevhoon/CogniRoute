@@ -16,8 +16,9 @@ export default function HomePage() {
   const [files, setFiles] = useState<GeneratedFile[]>([]);
   const [activeFileIdx, setActiveFileIdx] = useState(0);
   const [trace, setTrace] = useState<TraceItem[]>([]);
-  const [activeTab, setActiveTab] = useState<"code" | "trace">("code");
+  const [activeTab, setActiveTab] = useState<"code" | "reasoning" | "trace">("code");
   const [finalStatus, setFinalStatus] = useState<string | null>(null);
+  const [reasoning, setReasoning] = useState<string | null>(null);
   const traceRef = useRef<HTMLDivElement>(null);
   const codeRef = useRef<HTMLPreElement>(null);
 
@@ -34,6 +35,7 @@ export default function HomePage() {
     setActiveFileIdx(0);
     setTrace([]);
     setFinalStatus(null);
+    setReasoning(null);
     setActiveTab("code");
     setStatusMsg("Connecting to orchestrator...");
 
@@ -81,6 +83,14 @@ export default function HomePage() {
         setStatusMsg(`Architect planned ${evt.files.length} files`);
         addTrace(`📋 Planned ${evt.files.length} files: ${evt.files.map((f: any) => f.filename).join(", ")}`, "plan");
         setFiles(evt.files.map((f: any) => ({ nodeId: f.node_id, filename: f.filename, content: "", status: "pending" as const })));
+        setActiveTab("code");
+        break;
+
+      case "reasoning":
+        setReasoning(evt.content);
+        setStatusMsg("Architect reasoning complete — planning files...");
+        addTrace("🧠 Architecture reasoning generated", "plan");
+        setActiveTab("reasoning");
         break;
 
       case "file_start":
@@ -235,6 +245,7 @@ export default function HomePage() {
               {/* Code/Trace toggle for mobile-like feel */}
               <div className="ml-auto pr-2 flex items-center gap-1">
                 <button onClick={() => setActiveTab("code")} className={"text-[10px] px-2 py-1 rounded border " + (activeTab === "code" ? "border-cyan-500/20 bg-cyan-500/10 text-cyan-300" : "border-white/[0.06] text-slate-500")}>Code</button>
+                <button onClick={() => setActiveTab("reasoning")} className={"text-[10px] px-2 py-1 rounded border " + (activeTab === "reasoning" ? "border-violet-500/20 bg-violet-500/10 text-violet-300" : "border-white/[0.06] text-slate-500")}>🧠 Arch</button>
                 <button onClick={() => setActiveTab("trace")} className={"text-[10px] px-2 py-1 rounded border " + (activeTab === "trace" ? "border-cyan-500/20 bg-cyan-500/10 text-cyan-300" : "border-white/[0.06] text-slate-500")}>Trace</button>
               </div>
             </div>
@@ -261,6 +272,20 @@ export default function HomePage() {
                   </div>
                 </div>
               )
+            ) : activeTab === "reasoning" ? (
+              <div className="h-full overflow-y-auto p-5">
+                {reasoning ? (
+                  <div className="max-w-3xl">
+                    <div className="flex items-center gap-2 mb-4">
+                      <span className="text-lg">🧠</span>
+                      <span className="text-sm font-semibold text-violet-300">Architecture Reasoning</span>
+                    </div>
+                    <pre className="text-[12.5px] leading-[1.7] text-slate-300 whitespace-pre-wrap break-words font-sans">{reasoning}</pre>
+                  </div>
+                ) : (
+                  <div className="text-sm text-slate-600 mt-8 text-center">Architect reasoning will appear here after running orchestration.</div>
+                )}
+              </div>
             ) : (
               <div className="h-full overflow-y-auto p-4 space-y-1.5">
                 {trace.map((t) => (

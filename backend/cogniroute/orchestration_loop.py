@@ -69,9 +69,9 @@ class CognitiveOrchestrationLoop:
 
         trace_emit(trace, role=TraceRole.user, title="User request received", detail=prompt)
 
-        await self._emit({"type": "status", "message": "Architect is planning the project..."})
+        await self._emit({"type": "status", "message": "Architect is analyzing the project..."})
 
-        # ── Step 1: Architect plans the project ──────────────────────
+        # ── Step 1: Architect reasons + plans ─────────────────────────
         a_span = span_start(
             spans,
             name="architect.plan",
@@ -81,7 +81,7 @@ class CognitiveOrchestrationLoop:
             model=None,
         )
         started = time.perf_counter()
-        task_graph, plan_md, contracts_md = await self._architect.run(user_request=prompt)
+        task_graph, plan_md, contracts_md, architecture = await self._architect.run(user_request=prompt)
         span_end(
             spans,
             a_span,
@@ -90,6 +90,20 @@ class CognitiveOrchestrationLoop:
         )
 
         file_tasks = [n for n in task_graph.nodes if n.worker_type != WorkerType.verifier]
+
+        # Stream the architecture reasoning to frontend.
+        trace_emit(
+            trace,
+            role=TraceRole.architect,
+            title="Architecture reasoning",
+            detail=architecture,
+            meta={"graph_id": task_graph.graph_id},
+        )
+        await self._emit({
+            "type": "reasoning",
+            "content": architecture,
+        })
+
         trace_emit(
             trace,
             role=TraceRole.architect,
@@ -167,6 +181,7 @@ class CognitiveOrchestrationLoop:
                     prompt=prompt,
                     plan_md=plan_md,
                     contracts_md=contracts_md,
+                    architecture=architecture,
                     run_id=run_id,
                     spans=spans,
                     trace=trace,
@@ -280,6 +295,7 @@ class CognitiveOrchestrationLoop:
         prompt: str,
         plan_md: str,
         contracts_md: str,
+        architecture: str,
         run_id: str,
         spans: list,
         trace: list,
@@ -324,6 +340,7 @@ class CognitiveOrchestrationLoop:
                 contracts_markdown=contracts_md,
                 upstream_code=generated_files,
                 retry_issues=retry_issues,
+                architecture=architecture,
             )
 
             span_end(
