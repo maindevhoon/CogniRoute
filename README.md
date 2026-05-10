@@ -1,68 +1,43 @@
 # CogniRoute 🧠
 
-<div align="center">
-  <h3>An Advanced Multi-Agent AI Orchestration Runtime & Dashboard</h3>
-</div>
+CogniRoute is an experimental multi-agent AI tool that writes code by actually planning it out first. It's basically a backend orchestrator paired with a Next.js dashboard so you can watch the AI think and build in real-time.
 
----
+Instead of just spitting out one massive block of code like standard LLMs, CogniRoute breaks the task down into smaller files, writes them in parallel, and then checks its own work.
 
-**CogniRoute** is a sophisticated, open-source multi-agent orchestration runtime designed to autonomously generate, assemble, and verify entire multi-file codebases. It is powered by a scalable **FastAPI** backend and features a stunning, real-time **Next.js** glassmorphic dashboard for visualizing the AI's internal thought processes and execution streams.
-
-## 🌟 Overview
-
-Unlike standard conversational AI, CogniRoute utilizes a specialized multi-agent pipeline to tackle complex coding tasks reliably. It operates by breaking down abstract prompts into concrete file plans, generating code in parallel, and autonomously verifying the output against quality constraints.
-
-### The Pipeline Architecture
+## How it works
 
 ```mermaid
 graph TD
-    A[User Prompt] -->|Initiates Run| B(Architect Agent)
-    B -->|Generates Arch & File Plan| C{File Generation Queue}
-    C --> D(Worker Agent 1)
-    C --> E(Worker Agent 2)
-    C --> F(Worker Agent N)
-    D -->|Drafts Code| G{Verifier Agent}
-    E -->|Drafts Code| G
-    F -->|Drafts Code| G
-    G -->|Passes| H[Final Codebase]
-    G -->|Fails / Syntax Errors| I(Retry Loop)
-    I -->|Fix Instructions| C
+    A[User Prompt] --> B(Architect)
+    B -->|Plans files & arch| C{File Queue}
+    C --> D(Worker 1)
+    C --> E(Worker 2)
+    C --> F(Worker N)
+    D -->|Writes Code| G{Verifier}
+    E -->|Writes Code| G
+    F -->|Writes Code| G
+    G -->|Looks good| H[Final Codebase]
+    G -->|Syntax errors/Bugs| I(Retry Loop)
+    I -->|Fix it!| C
 ```
 
-## 🤖 Agent Roles
+There are three main "agents" under the hood:
 
-CogniRoute employs three distinct AI profiles to ensure high-quality software generation:
+1. **Architect**: You give it a prompt, and it figures out the system architecture. It outputs a JSON plan of exactly what files need to exist and what they should do.
+2. **Workers**: These run in parallel. Each worker grabs a file from the Architect's plan and writes the actual code for it.
+3. **Verifier**: The auditor. It checks the generated code for syntax errors or obvious logic flaws. If it catches something, it rejects the file and sends it back to the workers with fix instructions.
 
-1. **The Architect**: Analyzes the user's objective, formulates a comprehensive system architecture, and outputs a strict JSON plan detailing exactly which files need to be created, their purpose, and their dependencies.
-2. **The Workers**: Highly focused, parallel autonomous agents. Each worker takes the Architect's context and instructions for a specific file and drafts the implementation.
-3. **The Verifier**: A strict auditing agent that reviews the generated code for syntax errors, missing imports, and logic flaws. If the Verifier finds issues, it rejects the file and sends it back to the Workers with precise fix instructions.
+## What's inside
 
----
+- **`backend/`**: FastAPI app (Python 3.10+). This runs the actual orchestration loop and streams the events via SSE.
+- **`frontend/`**: Next.js 15 UI. Just a clean dark mode dashboard to track the live traces, read the Architect's reasoning, and view the code as it's generated.
+- **`state/`**: Local directory where the final generated files and state get dumped.
 
-## 📂 Project Structure
+## Running it locally
 
-The repository is divided into two main services:
+You'll need Python 3.10+ and Node.js 18+.
 
-- **`backend/`**: The core orchestration engine.
-  - Built with **FastAPI** (Python 3.10+).
-  - Handles the complex asynchronous orchestration loop (`orchestrator.py`).
-  - Streams execution events in real-time to the frontend via Server-Sent Events (SSE).
-- **`frontend/`**: The real-time command center.
-  - Built with **Next.js 15**, **React 19**, and **TailwindCSS 4**.
-  - Features a highly polished, dark-mode glassmorphic UI.
-  - Tracks live traces, visualizes Architect reasoning, and provides a syntax-highlighted code viewer.
-- **`state/`**: Directory for storing persistent orchestration state or outputs.
-
----
-
-## 🚀 Getting Started (Local Development)
-
-### Prerequisites
-- **Python 3.10+**
-- **Node.js 18+**
-- Applicable API keys for the LLM providers used in the backend.
-
-### 1. Backend Setup
+**1. Start the backend:**
 
 ```bash
 cd backend
@@ -70,36 +45,32 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-# Start the orchestration API
+# Start the API on port 8000
 uvicorn app.main:app --reload --port 8000
 ```
-*The backend will be available at `http://localhost:8000`.*
 
-### 2. Frontend Setup
+**2. Start the frontend:**
 
 ```bash
 cd frontend
 npm install
 
-# Start the Next.js development server
+# Start Next.js on port 3000
 npm run dev
 ```
-*The frontend will be available at `http://localhost:3000`.*
 
----
+## Docker
 
-## 🐳 Docker Deployment
+If you just want to run it via Docker (or deploy it somewhere like HuggingFace Spaces):
 
-CogniRoute includes Dockerfiles optimized for containerized deployments (such as HuggingFace Spaces or AWS ECS).
-
-### Backend Image
+**Backend:**
 ```bash
 docker build -t cogniroute-backend -f Dockerfile .
 docker run -p 7860:7860 cogniroute-backend
 ```
 
-### Frontend Image
-The frontend Dockerfile uses multi-stage builds and requires the backend URL at build time for static generation optimization.
+**Frontend:**
+Note: The frontend needs to know where the backend is at build time for static generation.
 ```bash
 docker build \
   --build-arg NEXT_PUBLIC_BACKEND_URL=http://your-backend-url:7860 \
@@ -109,24 +80,11 @@ docker build \
 docker run -p 3000:7860 cogniroute-frontend
 ```
 
----
+## API
 
-## 📡 API Reference
+- `POST /run`: Synchronous. Runs the whole pipeline and returns the final code when it's done.
+- `POST /generate/stream`: Asynchronous. Streams what the agents are doing via SSE (Server-Sent Events). The frontend uses this to show the live trace.
 
-- `POST /run`: Executes the orchestration synchronously and returns the final payload.
-- `POST /generate/stream`: The primary endpoint used by the UI. It accepts a JSON payload `{"prompt": "..."}` and returns a `text/event-stream` (SSE) stream of orchestration events (`plan`, `file_start`, `file_verified`, etc.) enabling real-time UI updates.
+## License
 
----
-
-## 🎨 UI Features
-
-- **Event Stream Tracing**: Watch the AI agents think, plan, and execute in real-time with millisecond precision.
-- **Architect Insights**: A dedicated tab to read the raw reasoning of the Architect agent before code is even written.
-- **Dynamic File Viewer**: Click through generated files and see the code syntax-highlighted instantly as it's completed.
-- **Premium Aesthetics**: Engineered with custom scrollbars, subtle radial glows, animated shimmer effects, and absolute zero reliance on basic emojis (fully SVG powered).
-
----
-
-## 📝 License
-
-This project is licensed under the MIT License.
+MIT
