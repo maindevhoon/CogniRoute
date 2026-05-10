@@ -1,7 +1,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 
-from cogniroute.orchestration_loop import run_generate
+from cogniroute.orchestration_loop import run_generate, run_generate_stream
 from cogniroute.schemas import GenerateRequest, GenerateResponse
 
 from .orchestrator import run_orchestration
@@ -24,7 +25,7 @@ def root():
     return {
         "name": "CogniRoute",
         "status": "online",
-        "endpoints": ["/health", "/generate", "/docs"],
+        "endpoints": ["/health", "/generate", "/generate/stream", "/docs"],
     }
 
 
@@ -43,3 +44,17 @@ async def run(req: RunRequest):
 async def generate(req: GenerateRequest):
     run = await run_generate(req.prompt)
     return GenerateResponse(run=run)
+
+
+@app.post("/generate/stream")
+async def generate_stream(req: GenerateRequest):
+    """SSE endpoint: streams orchestration events as they happen."""
+    return StreamingResponse(
+        run_generate_stream(req.prompt),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )

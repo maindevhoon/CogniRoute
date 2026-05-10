@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import asyncio
+import json
 import time
 import uuid
+from typing import Any, AsyncIterator, Callable, Coroutine, Optional
 
 from .agents.base import ScopedContext
 from .architect_agent import ArchitectAgent
@@ -22,10 +25,13 @@ from .verifier_agent import VerifierAgent
 
 MAX_RETRIES = 2
 
+# Type for the streaming event callback.
+EventCallback = Callable[[dict[str, Any]], Coroutine[Any, Any, None]]
+
 
 class CognitiveOrchestrationLoop:
     """
-    Multi-file CogniRoute orchestration loop.
+    Multi-file CogniRoute orchestration loop with optional SSE streaming.
 
     Flow:
       user prompt
@@ -38,11 +44,22 @@ class CognitiveOrchestrationLoop:
         → return all file artifacts + full trace
     """
 
-    def __init__(self, *, state: StateManager | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        state: StateManager | None = None,
+        on_event: EventCallback | None = None,
+    ) -> None:
         self._state = state or StateManager()
         self._architect = ArchitectAgent(state=self._state)
         self._worker = CodeWorker()
         self._verifier = VerifierAgent()
+        self._on_event = on_event
+
+    async def _emit(self, event: dict[str, Any]) -> None:
+        """Send a streaming event if a callback is registered."""
+        if self._on_event:
+            await self._on_event(event)
 
     async def run(self, *, prompt: str) -> OrchestrationRun:
         run_id = f"run_{uuid.uuid4().hex[:8]}"
@@ -51,6 +68,8 @@ class CognitiveOrchestrationLoop:
         routing_log: list[dict] = []
 
         trace_emit(trace, role=TraceRole.user, title="User request received", detail=prompt)
+
+        await self._emit({"type": "status", "message": "Architect is planning the project..."})
 
         # ── Step 1: Architect plans the project ──────────────────────
         a_span = span_start(
@@ -81,6 +100,22 @@ class CognitiveOrchestrationLoop:
             ),
             meta={"graph_id": task_graph.graph_id},
         )
+
+        # Send the plan to the frontend.
+        await self._emit({
+            "type": "plan",
+            "graph_id": task_graph.graph_id,
+            "files": [
+                {
+                    "node_id": n.id,
+                    "title": n.title,
+                    "filename": n.outputs_schema.get("filename", n.title),
+                    "worker_type": n.worker_type.value,
+                    "status": "pending",
+                }
+                for n in file_tasks
+            ],
+        })
 
         # ── Step 2: Execute file tasks in dependency order ───────────
         execution = {node.id: NodeExecution(node_id=node.id) for node in task_graph.nodes}
@@ -115,6 +150,14 @@ class CognitiveOrchestrationLoop:
                     worker_type=node.worker_type,
                     model_tier=node.model_tier,
                 )
+
+                target_filename = node.outputs_schema.get("filename", node.title)
+                await self._emit({
+                    "type": "file_start",
+                    "node_id": node.id,
+                    "filename": target_filename,
+                    "title": node.title,
+                })
 
                 # Run worker + verify with retry loop.
                 worker_result = await self._run_with_retries(
@@ -154,6 +197,8 @@ class CognitiveOrchestrationLoop:
             v_exec = execution[verifier_node.id]
             v_exec.status = TaskStatus.running
             v_exec.started_at_ms = now_ms()
+
+            await self._emit({"type": "status", "message": "Running final verification..."})
 
             v_span = span_start(
                 spans,
@@ -210,7 +255,7 @@ class CognitiveOrchestrationLoop:
             "verifier_status": verifier_report_dict.get("status", "N/A"),
         })
 
-        return OrchestrationRun(
+        result = OrchestrationRun(
             run_id=run_id,
             prompt=prompt,
             plan=task_graph,
@@ -222,6 +267,9 @@ class CognitiveOrchestrationLoop:
             plan_markdown=self._state.read_plan_markdown(),
             contracts_markdown=self._state.read_contracts_markdown(),
         )
+
+        await self._emit({"type": "complete", "run": json.loads(result.model_dump_json())})
+        return result
 
     async def _run_with_retries(
         self,
@@ -255,6 +303,13 @@ class CognitiveOrchestrationLoop:
                 meta={"node_id": node.id, "attempt": attempt},
             )
             worker_started = time.perf_counter()
+
+            await self._emit({
+                "type": "worker_start",
+                "node_id": node.id,
+                "attempt": attempt,
+                "message": f"Worker generating code{' (retry)' if attempt > 1 else ''}...",
+            })
 
             plan_section = _extract_section(plan_md, _section_for(node.worker_type))
             worker_result = await self._worker.run(
@@ -290,7 +345,23 @@ class CognitiveOrchestrationLoop:
                 meta={"attempt": attempt, "filename": worker_result.artifact.filename},
             )
 
+            # Send the generated code to the frontend.
+            await self._emit({
+                "type": "file_generated",
+                "node_id": node.id,
+                "filename": worker_result.artifact.filename,
+                "content": worker_result.artifact.content,
+                "attempt": attempt,
+            })
+
             # ── Verify ──
+            await self._emit({
+                "type": "verify_start",
+                "node_id": node.id,
+                "filename": worker_result.artifact.filename,
+                "message": "Verifier checking code quality...",
+            })
+
             v_span = span_start(
                 spans,
                 name="verifier.per_file",
@@ -328,6 +399,13 @@ class CognitiveOrchestrationLoop:
                 exec_rec.status = TaskStatus.succeeded
                 exec_rec.ended_at_ms = now_ms()
                 exec_rec.artifacts = worker_result.model_dump()
+
+                await self._emit({
+                    "type": "file_verified",
+                    "node_id": node.id,
+                    "filename": worker_result.artifact.filename,
+                    "status": "PASS",
+                })
                 return worker_result
 
             # Verification failed — retry or accept.
@@ -342,6 +420,14 @@ class CognitiveOrchestrationLoop:
                 meta={"issues": report.issues, "attempt": attempt},
             )
 
+            await self._emit({
+                "type": "file_verified",
+                "node_id": node.id,
+                "filename": worker_result.artifact.filename,
+                "status": "FAIL",
+                "issues": report.issues,
+            })
+
             if attempt <= MAX_RETRIES:
                 retry_issues = report.issues
                 trace_emit(
@@ -351,6 +437,12 @@ class CognitiveOrchestrationLoop:
                     detail=f"Feeding {len(report.issues)} issues back to worker.",
                     node_id=node.id,
                 )
+                await self._emit({
+                    "type": "file_retry",
+                    "node_id": node.id,
+                    "attempt": attempt + 1,
+                    "issues": report.issues,
+                })
             else:
                 # Accept the last attempt even if imperfect.
                 exec_rec.status = TaskStatus.succeeded
@@ -367,6 +459,34 @@ class CognitiveOrchestrationLoop:
 
 async def run_generate(prompt: str) -> OrchestrationRun:
     return await CognitiveOrchestrationLoop().run(prompt=prompt)
+
+
+async def run_generate_stream(prompt: str) -> AsyncIterator[str]:
+    """SSE-compatible generator that yields events as the orchestration progresses."""
+    queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
+
+    async def enqueue_event(event: dict[str, Any]) -> None:
+        await queue.put(event)
+
+    loop = CognitiveOrchestrationLoop(on_event=enqueue_event)
+
+    async def run_in_background():
+        try:
+            await loop.run(prompt=prompt)
+        except Exception as e:
+            await queue.put({"type": "error", "message": str(e)})
+        finally:
+            await queue.put(None)  # Signal end.
+
+    task = asyncio.create_task(run_in_background())
+
+    while True:
+        event = await queue.get()
+        if event is None:
+            break
+        yield f"data: {json.dumps(event)}\n\n"
+
+    await task  # Ensure the task is fully done.
 
 
 def _section_for(worker_type: WorkerType) -> str:
