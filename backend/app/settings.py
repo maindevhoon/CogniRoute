@@ -16,9 +16,9 @@ class Settings(BaseSettings):
     worker_base_url: Optional[str] = None
     llm_timeout_s: float = 10.0
 
-    architect_model: str = "Qwen/Qwen2.5-7B-Instruct"
+    architect_model: str = "Qwen/Qwen2.5-32B-Instruct"
     worker_model: str = "Qwen/Qwen2.5-7B-Instruct"
-    verifier_model: str = "Qwen/Qwen2.5-7B-Instruct"
+    verifier_model: str = "Qwen/Qwen2.5-32B-Instruct"
 
 
 settings = Settings()
