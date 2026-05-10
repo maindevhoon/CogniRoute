@@ -1,3 +1,12 @@
+---
+title: CogniRoute
+emoji: 🧠
+colorFrom: blue
+colorTo: indigo
+sdk: docker
+app_port: 7860
+---
+
 # CogniRoute
 
 CogniRoute is a hackathon MVP for a cognitive orchestration runtime for autonomous software engineering.
