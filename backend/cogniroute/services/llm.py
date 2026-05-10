@@ -51,9 +51,15 @@ ROLE_MODELS: dict[LlmRole, str] = {
 }
 
 ROLE_TEMPERATURES: dict[LlmRole, float] = {
-    LlmRole.architect: 0.1,
+    LlmRole.architect: 0.0,
     LlmRole.worker: 0.2,
     LlmRole.verifier: 0.0,
+}
+
+ROLE_MAX_TOKENS: dict[LlmRole, int] = {
+    LlmRole.architect: 8192,   # QwQ uses tokens for thinking before answering
+    LlmRole.worker: 4096,
+    LlmRole.verifier: 2048,
 }
 
 
@@ -101,6 +107,7 @@ async def call_model(
         model=ROLE_MODELS[llm_role],
         temperature=ROLE_TEMPERATURES[llm_role],
         json_schema_hint=json_schema_hint,
+        max_tokens=ROLE_MAX_TOKENS.get(llm_role, 4096),
     )
     role_base_url = base_url or ROLE_ENDPOINTS[llm_role] or settings.openai_base_url
     return await make_client(base_url=role_base_url).call_model(call=call)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from dataclasses import dataclass
 from enum import Enum
@@ -30,6 +31,12 @@ class LlmCall:
     model: str
     temperature: float
     json_schema_hint: Optional[str] = None
+    max_tokens: Optional[int] = None
+
+
+def _strip_thinking(text: str) -> str:
+    """Strip QwQ-style <think>...</think> reasoning blocks from model output."""
+    return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
 
 
 @dataclass(frozen=True)
@@ -94,7 +101,7 @@ class OpenAICompatibleClient(LlmClient):
         payload = {
             "model": call.model,
             "temperature": call.temperature,
-            "max_tokens": 4096,
+            "max_tokens": call.max_tokens or 4096,
             "messages": [
                 {"role": "system", "content": call.system_prompt},
                 {"role": "user", "content": user_content},
@@ -109,7 +116,7 @@ class OpenAICompatibleClient(LlmClient):
             data = r.json()
         elapsed_ms = int((time.perf_counter() - started) * 1000)
 
-        text = data["choices"][0]["message"]["content"]
+        text = _strip_thinking(data["choices"][0]["message"]["content"])
         meta = {
             "role": call.role.value,
             "model": call.model,

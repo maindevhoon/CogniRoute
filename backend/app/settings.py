@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     architect_base_url: Optional[str] = None
     verifier_base_url: Optional[str] = None
     worker_base_url: Optional[str] = None
-    llm_timeout_s: float = 120.0
+    llm_timeout_s: float = 180.0  # QwQ thinking models need more time
 
     architect_model: str = "Qwen/Qwen2.5-32B-Instruct"
     worker_model: str = "Qwen/Qwen2.5-7B-Instruct"
