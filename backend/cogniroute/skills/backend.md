@@ -46,3 +46,9 @@ def get_dashboard(id: str) -> Dashboard:
 - POST endpoints for mutations
 - Always include CORS middleware
 - Return consistent JSON shapes matching frontend type definitions
+
+## SQLAlchemy Rules
+- Always import everything you use: `from sqlalchemy import Column, Integer, String, ForeignKey, DateTime`
+- Relationship backref syntax: `relationship('Model', backref='name')` — NOT `back_popref`
+- For default timestamps use: `Column(DateTime, default=datetime.utcnow)` — import datetime at top
+- NEVER use `server_default` with Python functions — use `default` instead
