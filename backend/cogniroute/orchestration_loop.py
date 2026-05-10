@@ -173,11 +173,19 @@ class CognitiveOrchestrationLoop:
                     "title": node.title,
                 })
 
+                # Build dependency-filtered context: only files from tasks
+                # this node depends_on, not all generated files.
+                dep_files: dict[str, str] = {}
+                for dep_id in node.depends_on:
+                    if dep_id in all_results:
+                        dep_result = all_results[dep_id]
+                        dep_files[dep_result.artifact.filename] = dep_result.artifact.content
+
                 # Run worker + verify with retry loop.
                 worker_result = await self._run_with_retries(
                     node=node,
                     execution=execution,
-                    generated_files=generated_files,
+                    generated_files=dep_files,
                     prompt=prompt,
                     plan_md=plan_md,
                     contracts_md=contracts_md,

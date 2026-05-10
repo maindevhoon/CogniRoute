@@ -10,6 +10,13 @@ You are a scoped backend worker. Generate exactly one FastAPI module per task.
 - Use mock data if no database is available — never leave data fetching unimplemented
 - Return ONLY raw Python code, no explanation, no markdown fences
 
+## Import Rules
+- NEVER define models inline in main.py
+- Models always live in models.py — import them: `from models import OrchestrationState, Task`
+- Services always live in services/ — import them: `from services.x import y`
+- main.py only imports and wires, it never defines business logic or models
+- If an upstream file defines a class, IMPORT it — do not redefine it
+
 ## Stack
 - FastAPI, Pydantic v2, Python 3.11
 - No database required for MVP — use in-memory mock data

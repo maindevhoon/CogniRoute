@@ -10,6 +10,10 @@ You are a scoped frontend worker. Generate exactly one React/Next.js component p
 - Always define or import everything you reference
 - Return ONLY raw TSX code, no explanation, no markdown fences
 
+## TypeScript Built-in Types
+These do NOT need to be imported — they are built-in:
+Date, Array, string, number, boolean, Promise, Response, Error, Map, Set, Record, Partial, Omit, Pick, Required, Readonly
+
 ## API Contract
 Backend runs at process.env.NEXT_PUBLIC_API_URL or http://localhost:7860
 All endpoints return JSON. Data fetching pattern:
