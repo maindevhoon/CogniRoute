@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 from .llm import safe_json_loads
 from .agents.base import ScopedContext
@@ -18,15 +19,33 @@ WORKER_RESULT_SCHEMA_HINT = """{
   "notes": "string"
 }"""
 
+# Skill files directory (backend/cogniroute/skills/).
+_SKILLS_DIR = Path(__file__).resolve().parent / "skills"
+
+# Map worker_type -> skill filename.
+_SKILL_MAP: dict[str, str] = {
+    "frontend": "frontend.md",
+    "backend": "backend.md",
+}
+
+
+def _load_skill(worker_type: str) -> str:
+    """Load the skill markdown for a given worker type, or empty string."""
+    fname = _SKILL_MAP.get(worker_type)
+    if not fname:
+        return ""
+    path = _SKILLS_DIR / fname
+    if not path.exists():
+        return ""
+    return path.read_text(encoding="utf-8")
+
 
 class CodeWorker:
     """
-    Generic scoped code-generation worker.
+    Generic scoped code-generation worker with skill injection.
 
-    Given a task node describing a single file to produce, this worker
-    prompts the 7B model with the task description, upstream file context,
-    and any retry feedback from the verifier.  It returns one WorkerResult
-    with the generated file.
+    The worker loads a skill file based on worker_type (frontend.md, backend.md)
+    and prepends it to the prompt so the 7B model gets domain-specific rules.
     """
 
     async def run(
@@ -66,6 +85,10 @@ class CodeWorker:
         upstream_code: dict[str, str],
         retry_issues: list[str] | None = None,
     ) -> WorkerResult | None:
+        # Load domain-specific skill.
+        skill = _load_skill(ctx.node.worker_type.value)
+        skill_block = f"## SKILL (follow these rules strictly)\n{skill}\n\n" if skill else ""
+
         # Build upstream file context block.
         upstream_block = ""
         if upstream_code:
@@ -86,6 +109,7 @@ class CodeWorker:
             )
 
         prompt = (
+            f"{skill_block}"
             f"Generate the file: {ctx.node.outputs_schema.get('filename', ctx.node.title)}\n\n"
             f"## TASK\n"
             f"ID: {ctx.node.id}\n"
