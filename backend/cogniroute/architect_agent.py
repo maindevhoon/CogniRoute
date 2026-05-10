@@ -1,11 +1,21 @@
 from __future__ import annotations
 
 import uuid
+from pathlib import Path
 
 from .llm import safe_json_loads
 from .schemas import ModelTier, TaskGraph, TaskNode, WorkerType
 from .services.llm import call_model
 from .state_manager import StateManager
+
+_SKILLS_DIR = Path(__file__).resolve().parent / "skills"
+
+
+def _load_architect_skill() -> str:
+    path = _SKILLS_DIR / "architect.md"
+    if path.exists():
+        return path.read_text(encoding="utf-8")
+    return ""
 
 
 TASK_GRAPH_SCHEMA_HINT = """{
@@ -58,7 +68,7 @@ TASK_GRAPH_SCHEMA_HINT = """{
 
 class ArchitectAgent:
     """
-    Two-phase architect:
+    Two-phase architect with skill injection:
       1. Reasoning — thinks about architecture, data flow, API contracts
       2. Task graph — translates reasoning into a structured file plan
 
@@ -68,6 +78,7 @@ class ArchitectAgent:
 
     def __init__(self, *, state: StateManager) -> None:
         self._state = state
+        self._skill = _load_architect_skill()
 
     async def run(self, *, user_request: str) -> tuple[TaskGraph, str, str, str]:
         """Returns (task_graph, plan_md, contracts_md, architecture_reasoning)."""
@@ -85,7 +96,9 @@ class ArchitectAgent:
 
     async def _generate_reasoning(self, user_request: str) -> str:
         """Phase 1: The architect reasons about how the project fits together."""
+        skill_block = f"{self._skill}\n\n---\n\n" if self._skill else ""
         prompt = (
+            f"{skill_block}"
             f"The user wants to build: {user_request}\n\n"
             "As a senior software architect, reason through the following:\n\n"
             "1. **Architecture Overview**: What's the high-level architecture? (e.g. FastAPI backend + React frontend)\n"
@@ -106,7 +119,9 @@ class ArchitectAgent:
 
     async def _build_task_graph(self, user_request: str, reasoning: str) -> TaskGraph:
         """Phase 2: Convert reasoning into a structured task graph."""
+        skill_block = f"{self._skill}\n\n---\n\n" if self._skill else ""
         prompt = (
+            f"{skill_block}"
             "Based on this architecture reasoning, create a task graph.\n\n"
             f"## Architecture Reasoning\n{reasoning}\n\n"
             f"## User Request\n{user_request}\n\n"
