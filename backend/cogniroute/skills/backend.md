@@ -8,7 +8,7 @@ You are a scoped backend worker. Generate exactly one FastAPI module per task.
 - Define every function you call — no references to undefined functions
 - Every endpoint must have a response_model declared
 - Use mock data if no database is available — never leave data fetching unimplemented
-- Return ONLY raw Python code, no explanation, no markdown fences
+- Return ONLY valid JSON matching the provided schema — put your raw Python code in the "content" field.
 
 ## Import Rules
 - NEVER define models inline in main.py
