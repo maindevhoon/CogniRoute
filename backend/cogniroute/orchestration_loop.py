@@ -9,6 +9,7 @@ from typing import Any, AsyncIterator, Callable, Coroutine, Optional
 from .agents.base import ScopedContext
 from .architect_agent import ArchitectAgent
 from .code_worker import CodeWorker
+from .fixer_agent import FixerAgent
 from .schemas import (
     ModelTier,
     NodeExecution,
@@ -54,6 +55,7 @@ class CognitiveOrchestrationLoop:
         self._architect = ArchitectAgent(state=self._state)
         self._worker = CodeWorker()
         self._verifier = VerifierAgent()
+        self._fixer = FixerAgent()
         self._on_event = on_event
 
     async def _emit(self, event: dict[str, Any]) -> None:
@@ -269,6 +271,32 @@ class CognitiveOrchestrationLoop:
                 task_id=verifier_node.id,
                 status=TaskStatus.succeeded if final_report.ok else TaskStatus.failed,
             )
+
+            # --- EXPERIMENTAL FIXER ---
+            if not final_report.ok:
+                await self._emit({"type": "status", "message": "Applying global fixes using reasoning model..."})
+                fixed_files = await self._fixer.fix(
+                    task_graph=task_graph,
+                    all_results=all_results,
+                    issues=final_report.issues,
+                    user_goal=prompt
+                )
+                if fixed_files:
+                    # Update all_results and generated_files
+                    for f_name, f_content in fixed_files.items():
+                        # Find corresponding node
+                        for node_id, w_res in all_results.items():
+                            if w_res.artifact.filename == f_name:
+                                w_res.artifact.content = f_content
+                                generated_files[f_name] = f_content
+                                # Emit file generated event to update UI
+                                await self._emit({
+                                    "type": "file_generated",
+                                    "node_id": node_id,
+                                    "filename": f_name,
+                                    "content": f_content,
+                                })
+                                break
 
         # ── Telemetry ────────────────────────────────────────────────
         self._state.update_telemetry({
