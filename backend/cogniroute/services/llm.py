@@ -1,13 +1,9 @@
 from __future__ import annotations
 
-import re
 from typing import Optional
 
 from app.settings import settings
 from ..llm import LlmCall, LlmResult, LlmRole, OpenAICompatibleClient
-
-def strip_thinking(text: str) -> str:
-    return re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
 
 
 SYSTEM_PROMPTS: dict[LlmRole, str] = {
@@ -49,9 +45,9 @@ SYSTEM_PROMPTS: dict[LlmRole, str] = {
 }
 
 ROLE_MODELS: dict[LlmRole, str] = {
-    LlmRole.architect: settings.architect_model,
-    LlmRole.worker: settings.worker_model,
-    LlmRole.verifier: settings.verifier_model,
+    LlmRole.architect: "Qwen/Qwen2.5-32B-Instruct",
+    LlmRole.worker: "Qwen/Qwen2.5-7B-Instruct",
+    LlmRole.verifier: "Qwen/Qwen2.5-32B-Instruct",
 }
 
 ROLE_TEMPERATURES: dict[LlmRole, float] = {
@@ -117,8 +113,7 @@ async def call_model(
     
     try:
         result = await make_client(base_url=role_base_url).call_model(call=call)
-        stripped_text = strip_thinking(result.text)
-        return LlmResult(text=stripped_text, meta=result.meta)
+        return result
     except Exception as e:
         print(f"[{role}] LLM call failed: {type(e).__name__}: {e}")
         raise
