@@ -13,9 +13,10 @@ You are a scoped backend worker. Generate exactly one FastAPI module per task.
 ## Import Rules
 - NEVER define models inline in main.py
 - Models always live in models.py — import them: `from models import OrchestrationState, Task`
-- Services always live in services/ — import them: `from services.x import y`
+- Services always live in services/ — import them: `from services.users import create_user as svc_create_user` or `from services import users`.
+- DO NOT shadow imported functions in main.py. If you import `create_user`, name your FastAPI route `create_user_route` to avoid conflicts.
 - main.py only imports and wires, it never defines business logic or models
-- If an upstream file defines a class, IMPORT it — do not redefine it
+- If an upstream file defines a class or function, IMPORT it — do not redefine it
 
 ## Stack
 - FastAPI, Pydantic v2, Python 3.11

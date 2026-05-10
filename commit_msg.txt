@@ -1,0 +1,4 @@
+fix: resolve shadowing and typing hallucinations in skill files
+
+- frontend.md: Updated Response Types section to explicitly remind the model to define ALL nested types (like Task) instead of just Dashboard, avoiding the undefined type loop. Also added a rule against self-referential circular imports in index files.
+- backend.md: Added rule to alias imports (e.g. as svc_create_user) or name router functions differently (def create_user_route()) so they don't shadow imported service functions.
