@@ -68,7 +68,7 @@ class OpenAICompatibleClient(LlmClient):
         *,
         base_url: Optional[str],
         api_key: Optional[str] = None,
-        chat_completions_path: str = "/v1/chat/completions",
+        chat_completions_path: str = "/chat/completions",
         timeout_s: float = 60.0,
     ) -> None:
         self._base_url = base_url.rstrip("/") if base_url else None
@@ -94,6 +94,7 @@ class OpenAICompatibleClient(LlmClient):
         payload = {
             "model": call.model,
             "temperature": call.temperature,
+            "max_tokens": 4096,
             "messages": [
                 {"role": "system", "content": call.system_prompt},
                 {"role": "user", "content": user_content},
@@ -124,12 +125,49 @@ class OpenAICompatibleClient(LlmClient):
 
 def safe_json_loads(text: str) -> Any:
     """
-    Tolerate fenced JSON blocks from some gateways.
+    Tolerate fenced JSON blocks and extra prose from LLM output.
     """
+    import re
 
     cleaned = text.strip()
+
+    # Strip markdown code fences.
     if cleaned.startswith("```"):
-        cleaned = cleaned.strip("`")
-        cleaned = cleaned.replace("json\n", "", 1).strip()
+        # Remove opening fence (with optional language tag) and closing fence.
+        cleaned = re.sub(r"^```(?:json)?\s*\n?", "", cleaned)
+        cleaned = re.sub(r"\n?```\s*$", "", cleaned)
+        cleaned = cleaned.strip()
+
+    # If the text starts with prose before JSON, find the first { or [.
+    if cleaned and cleaned[0] not in ('{', '['):
+        brace = cleaned.find('{')
+        bracket = cleaned.find('[')
+        candidates = [i for i in (brace, bracket) if i >= 0]
+        if candidates:
+            start = min(candidates)
+            cleaned = cleaned[start:]
+
+    # If there's trailing text after the JSON, find the matching close.
+    if cleaned.startswith('{'):
+        depth = 0
+        for i, c in enumerate(cleaned):
+            if c == '{':
+                depth += 1
+            elif c == '}':
+                depth -= 1
+                if depth == 0:
+                    cleaned = cleaned[:i + 1]
+                    break
+    elif cleaned.startswith('['):
+        depth = 0
+        for i, c in enumerate(cleaned):
+            if c == '[':
+                depth += 1
+            elif c == ']':
+                depth -= 1
+                if depth == 0:
+                    cleaned = cleaned[:i + 1]
+                    break
+
     return json.loads(cleaned)
 

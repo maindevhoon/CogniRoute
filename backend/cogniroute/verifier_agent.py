@@ -1,81 +1,135 @@
 from __future__ import annotations
 
 from .llm import safe_json_loads
-from .schemas import TaskGraph, VerifierReport, WorkerResult
+from .schemas import TaskGraph, TaskNode, VerifierReport, WorkerResult
 from .services.llm import call_model
-from .state.plan import parse_implementation_plan
 
 
 VERIFIER_SCHEMA_HINT = """{
   "status": "PASS|FAIL",
-  "issues": ["string"]
+  "issues": ["concise description of each problem found"]
 }"""
 
 
 class VerifierAgent:
     """
-    Single-pass verifier for the first CogniRoute loop.
+    Per-file verifier for the multi-file orchestration loop.
+
+    Called after each worker produces a file.  Returns PASS or FAIL with
+    actionable issues that get fed back to the worker on retry.
     """
 
-    async def run(
+    async def verify_file(
+        self,
+        *,
+        task_node: TaskNode,
+        worker_result: WorkerResult,
+        upstream_code: dict[str, str],
+        user_goal: str,
+    ) -> VerifierReport:
+        """Verify a single generated file against its task spec."""
+        model_report = await self._run_model(
+            task_node=task_node,
+            worker_result=worker_result,
+            upstream_code=upstream_code,
+            user_goal=user_goal,
+        )
+        if model_report is not None:
+            return model_report
+
+        # Deterministic fallback checks.
+        return self._deterministic_check(worker_result)
+
+    async def verify_final(
         self,
         *,
         task_graph: TaskGraph,
-        worker_result: WorkerResult,
-        plan_markdown: str,
-        contracts_markdown: str,
+        all_results: dict[str, WorkerResult],
+        user_goal: str,
     ) -> VerifierReport:
-        model_report = await self._run_model(
-            task_graph=task_graph,
-            worker_result=worker_result,
-            plan_markdown=plan_markdown,
-            contracts_markdown=contracts_markdown,
+        """Final verification of all generated files together."""
+        files_summary = "\n".join(
+            f"- {r.artifact.filename} ({len(r.artifact.content)} chars)"
+            for r in all_results.values()
         )
-        if model_report is not None and model_report.status == "FAIL":
-            return model_report
+        prompt = (
+            "You are doing a FINAL verification of a complete project.\n"
+            "Check that all files are consistent with each other and with the user goal.\n"
+            "Look for: missing imports between files, API mismatches, incomplete implementations.\n\n"
+            f"User goal: {user_goal}\n\n"
+            f"Generated files:\n{files_summary}\n\n"
+            "File contents:\n"
+        )
+        for r in all_results.values():
+            prompt += f"\n--- {r.artifact.filename} ---\n{r.artifact.content}\n"
 
-        issues: list[str] = []
+        prompt += "\n\nReturn PASS if the project is coherent, FAIL with issues if not."
 
-        if worker_result.status != "completed":
-            issues.append(f"Worker task {worker_result.task_id} did not complete.")
-        if not worker_result.artifact.filename:
-            issues.append("Artifact filename is empty.")
-        if not worker_result.artifact.content.strip():
-            issues.append("Artifact content is empty.")
-        if "Frontend Artifact Contract" not in contracts_markdown:
-            issues.append("System contracts are missing the frontend artifact contract.")
-
-        node_ids = {node.id for node in task_graph.nodes}
-        for node in task_graph.nodes:
-            for dep in node.depends_on:
-                if dep not in node_ids:
-                    issues.append(f"Task {node.id} depends on missing task {dep}.")
-
-        plan = parse_implementation_plan(plan_markdown)
-        completed = {item.text.split(":", 1)[0] for item in plan.all_items() if item.status.value == "done"}
-        if worker_result.task_id not in completed:
-            issues.append(f"Checklist item for {worker_result.task_id} is not marked complete.")
-
-        return VerifierReport(status="PASS" if not issues else "FAIL", issues=issues)
+        try:
+            result = await call_model(
+                "verifier", prompt, json_schema_hint=VERIFIER_SCHEMA_HINT
+            )
+            return VerifierReport.model_validate(safe_json_loads(result.text))
+        except Exception:
+            # If final verification LLM fails, do basic checks.
+            issues = []
+            for r in all_results.values():
+                issues.extend(self._deterministic_check(r).issues)
+            return VerifierReport(
+                status="PASS" if not issues else "FAIL", issues=issues
+            )
 
     async def _run_model(
         self,
         *,
-        task_graph: TaskGraph,
+        task_node: TaskNode,
         worker_result: WorkerResult,
-        plan_markdown: str,
-        contracts_markdown: str,
+        upstream_code: dict[str, str],
+        user_goal: str,
     ) -> VerifierReport | None:
+        upstream_block = ""
+        if upstream_code:
+            parts = [f"--- {f} ---\n{c}\n" for f, c in upstream_code.items()]
+            upstream_block = (
+                "\n\nOther project files for context:\n" + "\n".join(parts)
+            )
+
         prompt = (
-            "Validate this single CogniRoute execution checkpoint. "
-            "Do not replan. Do not request retries. Return PASS or FAIL only.\n\n"
-            f"Task graph JSON:\n{task_graph.model_dump_json()}\n\n"
-            f"Worker result JSON:\n{worker_result.model_dump_json()}\n\n"
-            f"Implementation plan markdown:\n{plan_markdown}\n\n"
-            f"System contracts markdown:\n{contracts_markdown}\n"
+            "Verify this single generated file.\n"
+            "Check for: syntax errors, missing imports, incomplete code, "
+            "placeholder stubs, truncated content, and contract violations.\n"
+            "Be strict: if the file has '...' or '// TODO' placeholders, FAIL it.\n\n"
+            f"User goal: {user_goal}\n\n"
+            f"Task: {task_node.title}\n"
+            f"Task description: {task_node.description}\n\n"
+            f"Generated file: {worker_result.artifact.filename}\n"
+            f"Content:\n{worker_result.artifact.content}\n"
+            f"{upstream_block}\n\n"
+            "Return PASS if the file is complete and correct, FAIL with specific issues if not."
         )
         try:
-            result = await call_model("verifier", prompt, json_schema_hint=VERIFIER_SCHEMA_HINT)
+            result = await call_model(
+                "verifier", prompt, json_schema_hint=VERIFIER_SCHEMA_HINT
+            )
             return VerifierReport.model_validate(safe_json_loads(result.text))
         except Exception:
             return None
+
+    def _deterministic_check(self, worker_result: WorkerResult) -> VerifierReport:
+        """Basic structural checks that don't need the LLM."""
+        issues: list[str] = []
+
+        if worker_result.status != "completed":
+            issues.append(
+                f"Worker task {worker_result.task_id} status is '{worker_result.status}', expected 'completed'."
+            )
+        if not worker_result.artifact.filename:
+            issues.append("Artifact filename is empty.")
+        if not worker_result.artifact.content.strip():
+            issues.append("Artifact content is empty.")
+        if len(worker_result.artifact.content.strip()) < 20:
+            issues.append("Artifact content is suspiciously short (< 20 chars).")
+
+        return VerifierReport(
+            status="PASS" if not issues else "FAIL", issues=issues
+        )

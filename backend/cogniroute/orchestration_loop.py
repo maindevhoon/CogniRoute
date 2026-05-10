@@ -5,36 +5,57 @@ import uuid
 
 from .agents.base import ScopedContext
 from .architect_agent import ArchitectAgent
-from .frontend_worker import FrontendWorker
-from .schemas import ModelTier, NodeExecution, OrchestrationRun, TaskStatus, TraceRole, WorkerType
+from .code_worker import CodeWorker
+from .schemas import (
+    ModelTier,
+    NodeExecution,
+    OrchestrationRun,
+    TaskNode,
+    TaskStatus,
+    TraceRole,
+    WorkerResult,
+    WorkerType,
+)
 from .state_manager import StateManager
 from .telemetry.tracing import now_ms, span_end, span_start, trace_emit
 from .verifier_agent import VerifierAgent
 
+MAX_RETRIES = 2
+
 
 class CognitiveOrchestrationLoop:
     """
-    First working CogniRoute loop:
-    user -> architect -> markdown state -> one frontend worker -> verifier -> state.
+    Multi-file CogniRoute orchestration loop.
+
+    Flow:
+      user prompt
+        → architect (32B) plans N file tasks
+        → for each file task (sequential, dependency-aware):
+            → worker (7B) generates file code
+            → verifier (32B) checks quality
+            → if FAIL: re-prompt worker with issues (up to MAX_RETRIES)
+        → final cross-file verification
+        → return all file artifacts + full trace
     """
 
     def __init__(self, *, state: StateManager | None = None) -> None:
         self._state = state or StateManager()
         self._architect = ArchitectAgent(state=self._state)
-        self._frontend_worker = FrontendWorker()
+        self._worker = CodeWorker()
         self._verifier = VerifierAgent()
 
     async def run(self, *, prompt: str) -> OrchestrationRun:
         run_id = f"run_{uuid.uuid4().hex[:8]}"
-        spans = []
-        trace = []
+        spans: list = []
+        trace: list = []
         routing_log: list[dict] = []
 
         trace_emit(trace, role=TraceRole.user, title="User request received", detail=prompt)
 
+        # ── Step 1: Architect plans the project ──────────────────────
         a_span = span_start(
             spans,
-            name="architect.generate_state",
+            name="architect.plan",
             role="architect",
             worker_type=None,
             model_tier=ModelTier.architect,
@@ -46,135 +67,148 @@ class CognitiveOrchestrationLoop:
             spans,
             a_span,
             latency_ms=int((time.perf_counter() - started) * 1000),
-            meta={"graph_id": task_graph.graph_id, "markdown_state": True},
+            meta={"graph_id": task_graph.graph_id, "num_files": len([n for n in task_graph.nodes if n.worker_type != WorkerType.verifier])},
         )
+
+        file_tasks = [n for n in task_graph.nodes if n.worker_type != WorkerType.verifier]
         trace_emit(
             trace,
             role=TraceRole.architect,
-            title="Markdown state generated",
-            detail="Created implementation_plan.md, system_contracts.md, and a structured task graph.",
+            title=f"Planned {len(file_tasks)} file tasks",
+            detail=(
+                "Files to generate:\n"
+                + "\n".join(f"  - {n.id}: {n.outputs_schema.get('filename', n.title)}" for n in file_tasks)
+            ),
             meta={"graph_id": task_graph.graph_id},
         )
 
+        # ── Step 2: Execute file tasks in dependency order ───────────
         execution = {node.id: NodeExecution(node_id=node.id) for node in task_graph.nodes}
-        frontend_task = next(node for node in task_graph.nodes if node.worker_type == WorkerType.frontend)
+        all_results: dict[str, WorkerResult] = {}
+        generated_files: dict[str, str] = {}  # filename -> content
 
-        routing_log.append(
-            {
-                "node_id": frontend_task.id,
-                "chosen_worker": WorkerType.frontend.value,
-                "reason": "first_loop_frontend_task",
-            }
-        )
-        trace_emit(
-            trace,
-            role=TraceRole.system,
-            title="Scoped worker dispatch",
-            detail="Dispatching exactly one frontend task with frontend plan section and contracts only.",
-            node_id=frontend_task.id,
-            worker_type=WorkerType.frontend,
-            model_tier=frontend_task.model_tier,
-        )
+        remaining = {n.id: n for n in file_tasks}
+        completed: set[str] = set()
 
-        frontend_execution = execution[frontend_task.id]
-        frontend_execution.status = TaskStatus.running
-        frontend_execution.started_at_ms = now_ms()
+        while remaining:
+            progressed = False
+            for node_id, node in list(remaining.items()):
+                deps_met = all(
+                    dep in completed for dep in node.depends_on
+                    if dep in {n.id for n in file_tasks}
+                )
+                if not deps_met:
+                    continue
 
-        w_span = span_start(
-            spans,
-            name="worker.frontend",
-            role="worker",
-            worker_type=WorkerType.frontend,
-            model_tier=ModelTier.worker,
-            model=None,
-            meta={"node_id": frontend_task.id},
+                # Route the task.
+                routing_log.append({
+                    "node_id": node.id,
+                    "chosen_worker": node.worker_type.value,
+                    "reason": "plan.worker_type",
+                })
+                trace_emit(
+                    trace,
+                    role=TraceRole.system,
+                    title=f"Dispatching: {node.title}",
+                    detail=f"Routing {node.id} to {node.worker_type.value} worker.",
+                    node_id=node.id,
+                    worker_type=node.worker_type,
+                    model_tier=node.model_tier,
+                )
+
+                # Run worker + verify with retry loop.
+                worker_result = await self._run_with_retries(
+                    node=node,
+                    execution=execution,
+                    generated_files=generated_files,
+                    prompt=prompt,
+                    plan_md=plan_md,
+                    contracts_md=contracts_md,
+                    run_id=run_id,
+                    spans=spans,
+                    trace=trace,
+                )
+
+                all_results[node.id] = worker_result
+                generated_files[worker_result.artifact.filename] = worker_result.artifact.content
+                self._state.mark_task(task_id=node.id, status=TaskStatus.succeeded)
+                completed.add(node_id)
+                remaining.pop(node_id)
+                progressed = True
+
+            if not progressed:
+                # Unresolvable dependencies.
+                for node_id in remaining:
+                    execution[node_id].status = TaskStatus.failed
+                    execution[node_id].error = "Unresolvable dependencies"
+                break
+
+        # ── Step 3: Final cross-file verification ────────────────────
+        verifier_node = next(
+            (n for n in task_graph.nodes if n.worker_type == WorkerType.verifier),
+            None,
         )
-        worker_started = time.perf_counter()
-        worker_result = await self._frontend_worker.run(
-            ctx=ScopedContext(
-                run_id=run_id,
+        verifier_report_dict: dict = {}
+
+        if verifier_node and all_results:
+            v_exec = execution[verifier_node.id]
+            v_exec.status = TaskStatus.running
+            v_exec.started_at_ms = now_ms()
+
+            v_span = span_start(
+                spans,
+                name="verifier.final",
+                role="verifier",
+                worker_type=WorkerType.verifier,
+                model_tier=ModelTier.verifier,
+                model=None,
+                meta={"node_id": verifier_node.id},
+            )
+            final_report = await self._verifier.verify_final(
+                task_graph=task_graph,
+                all_results=all_results,
                 user_goal=prompt,
-                node=frontend_task,
-                upstream_artifacts={},
-                plan_section_markdown=_extract_section(plan_md, "Frontend"),
-                allowed_plan_item_keys=set(),
-            ),
-            contracts_markdown=contracts_md,
-        )
-        self._state.mark_task(task_id=frontend_task.id, status=TaskStatus.succeeded)
-        frontend_execution.status = TaskStatus.succeeded
-        frontend_execution.ended_at_ms = now_ms()
-        frontend_execution.artifacts = worker_result.model_dump()
-        span_end(
-            spans,
-            w_span,
-            latency_ms=int((time.perf_counter() - worker_started) * 1000),
-            meta={"artifact_filename": worker_result.artifact.filename},
-        )
-        trace_emit(
-            trace,
-            role=TraceRole.worker,
-            title="Frontend artifact generated",
-            detail=f"Generated {worker_result.artifact.filename}.",
-            node_id=frontend_task.id,
-            worker_type=WorkerType.frontend,
-            model_tier=ModelTier.worker,
-            meta={"task_id": worker_result.task_id, "status": worker_result.status},
-        )
+            )
+            verifier_report_dict = final_report.model_dump()
+            v_exec.status = TaskStatus.succeeded if final_report.ok else TaskStatus.failed
+            v_exec.ended_at_ms = now_ms()
+            v_exec.artifacts = {"verifier_report": verifier_report_dict}
+            if not final_report.ok:
+                v_exec.error = "; ".join(final_report.issues)
 
-        verifier_task = next(node for node in task_graph.nodes if node.worker_type == WorkerType.verifier)
-        verifier_execution = execution[verifier_task.id]
-        verifier_execution.status = TaskStatus.running
-        verifier_execution.started_at_ms = now_ms()
+            span_end(
+                spans,
+                v_span,
+                status="ok" if final_report.ok else "error",
+                meta=verifier_report_dict,
+            )
+            trace_emit(
+                trace,
+                role=TraceRole.verifier,
+                title=f"Final verification: {final_report.status}",
+                detail=(
+                    "All files passed cross-file consistency check."
+                    if final_report.ok
+                    else "Issues: " + "; ".join(final_report.issues)
+                ),
+                node_id=verifier_node.id,
+                worker_type=WorkerType.verifier,
+                model_tier=ModelTier.verifier,
+                meta=verifier_report_dict,
+            )
 
-        v_span = span_start(
-            spans,
-            name="verifier.validate",
-            role="verifier",
-            worker_type=WorkerType.verifier,
-            model_tier=ModelTier.verifier,
-            model=None,
-            meta={"node_id": verifier_task.id},
-        )
-        verifier_report = await self._verifier.run(
-            task_graph=task_graph,
-            worker_result=worker_result,
-            plan_markdown=self._state.read_plan_markdown(),
-            contracts_markdown=self._state.read_contracts_markdown(),
-        )
-        if verifier_report.status == "PASS":
-            self._state.mark_task(task_id=verifier_task.id, status=TaskStatus.succeeded)
-            verifier_execution.status = TaskStatus.succeeded
-        else:
-            verifier_execution.status = TaskStatus.failed
-            verifier_execution.error = "; ".join(verifier_report.issues)
-        verifier_execution.ended_at_ms = now_ms()
-        verifier_execution.artifacts = {"verifier_report": verifier_report.model_dump()}
-        span_end(
-            spans,
-            v_span,
-            status="ok" if verifier_report.status == "PASS" else "error",
-            meta=verifier_report.model_dump(),
-        )
-        trace_emit(
-            trace,
-            role=TraceRole.verifier,
-            title=f"Verifier {verifier_report.status}",
-            detail="Validated completed checklist items and artifact contract.",
-            node_id=verifier_task.id,
-            worker_type=WorkerType.verifier,
-            model_tier=ModelTier.verifier,
-            meta=verifier_report.model_dump(),
-        )
+            self._state.mark_task(
+                task_id=verifier_node.id,
+                status=TaskStatus.succeeded if final_report.ok else TaskStatus.failed,
+            )
 
-        self._state.update_telemetry(
-            {
-                "run_id": run_id,
-                "graph_id": task_graph.graph_id,
-                "frontend_task": frontend_task.id,
-                "verifier_status": verifier_report.status,
-            }
-        )
+        # ── Telemetry ────────────────────────────────────────────────
+        self._state.update_telemetry({
+            "run_id": run_id,
+            "graph_id": task_graph.graph_id,
+            "files_generated": len(all_results),
+            "verifier_status": verifier_report_dict.get("status", "N/A"),
+        })
 
         return OrchestrationRun(
             run_id=run_id,
@@ -184,14 +218,164 @@ class CognitiveOrchestrationLoop:
             spans=spans,
             trace=trace,
             routing_log=routing_log,
-            verifier_report=verifier_report.model_dump(),
+            verifier_report=verifier_report_dict,
             plan_markdown=self._state.read_plan_markdown(),
             contracts_markdown=self._state.read_contracts_markdown(),
         )
 
+    async def _run_with_retries(
+        self,
+        *,
+        node: TaskNode,
+        execution: dict[str, NodeExecution],
+        generated_files: dict[str, str],
+        prompt: str,
+        plan_md: str,
+        contracts_md: str,
+        run_id: str,
+        spans: list,
+        trace: list,
+    ) -> WorkerResult:
+        """Run a worker, verify, retry on failure up to MAX_RETRIES."""
+        exec_rec = execution[node.id]
+        exec_rec.status = TaskStatus.running
+        exec_rec.started_at_ms = now_ms()
+
+        retry_issues: list[str] | None = None
+
+        for attempt in range(1, MAX_RETRIES + 2):  # 1 initial + MAX_RETRIES retries
+            # ── Worker call ──
+            w_span = span_start(
+                spans,
+                name=f"worker.{node.worker_type.value}",
+                role="worker",
+                worker_type=node.worker_type,
+                model_tier=ModelTier.worker,
+                model=None,
+                meta={"node_id": node.id, "attempt": attempt},
+            )
+            worker_started = time.perf_counter()
+
+            plan_section = _extract_section(plan_md, _section_for(node.worker_type))
+            worker_result = await self._worker.run(
+                ctx=ScopedContext(
+                    run_id=run_id,
+                    user_goal=prompt,
+                    node=node,
+                    upstream_artifacts={},
+                    plan_section_markdown=plan_section,
+                    allowed_plan_item_keys=set(),
+                ),
+                contracts_markdown=contracts_md,
+                upstream_code=generated_files,
+                retry_issues=retry_issues,
+            )
+
+            span_end(
+                spans,
+                w_span,
+                latency_ms=int((time.perf_counter() - worker_started) * 1000),
+                meta={"filename": worker_result.artifact.filename, "attempt": attempt},
+            )
+
+            action = "generated" if attempt == 1 else f"regenerated (attempt {attempt})"
+            trace_emit(
+                trace,
+                role=TraceRole.worker,
+                title=f"Worker {action}: {worker_result.artifact.filename}",
+                detail=f"File: {worker_result.artifact.filename} ({len(worker_result.artifact.content)} chars)",
+                node_id=node.id,
+                worker_type=node.worker_type,
+                model_tier=ModelTier.worker,
+                meta={"attempt": attempt, "filename": worker_result.artifact.filename},
+            )
+
+            # ── Verify ──
+            v_span = span_start(
+                spans,
+                name="verifier.per_file",
+                role="verifier",
+                worker_type=WorkerType.verifier,
+                model_tier=ModelTier.verifier,
+                model=None,
+                meta={"node_id": node.id, "attempt": attempt},
+            )
+            verify_started = time.perf_counter()
+            report = await self._verifier.verify_file(
+                task_node=node,
+                worker_result=worker_result,
+                upstream_code=generated_files,
+                user_goal=prompt,
+            )
+            span_end(
+                spans,
+                v_span,
+                status="ok" if report.ok else "error",
+                latency_ms=int((time.perf_counter() - verify_started) * 1000),
+                meta=report.model_dump(),
+            )
+
+            if report.ok:
+                trace_emit(
+                    trace,
+                    role=TraceRole.verifier,
+                    title=f"Verified PASS: {worker_result.artifact.filename}",
+                    detail="File passed verification.",
+                    node_id=node.id,
+                    worker_type=WorkerType.verifier,
+                    model_tier=ModelTier.verifier,
+                )
+                exec_rec.status = TaskStatus.succeeded
+                exec_rec.ended_at_ms = now_ms()
+                exec_rec.artifacts = worker_result.model_dump()
+                return worker_result
+
+            # Verification failed — retry or accept.
+            trace_emit(
+                trace,
+                role=TraceRole.verifier,
+                title=f"Verified FAIL (attempt {attempt}): {worker_result.artifact.filename}",
+                detail="Issues: " + "; ".join(report.issues),
+                node_id=node.id,
+                worker_type=WorkerType.verifier,
+                model_tier=ModelTier.verifier,
+                meta={"issues": report.issues, "attempt": attempt},
+            )
+
+            if attempt <= MAX_RETRIES:
+                retry_issues = report.issues
+                trace_emit(
+                    trace,
+                    role=TraceRole.system,
+                    title=f"Retrying {node.id} (attempt {attempt + 1})",
+                    detail=f"Feeding {len(report.issues)} issues back to worker.",
+                    node_id=node.id,
+                )
+            else:
+                # Accept the last attempt even if imperfect.
+                exec_rec.status = TaskStatus.succeeded
+                exec_rec.ended_at_ms = now_ms()
+                exec_rec.artifacts = worker_result.model_dump()
+                exec_rec.error = f"Accepted after {MAX_RETRIES} retries; issues: {'; '.join(report.issues)}"
+                return worker_result
+
+        # Should not reach here, but just in case.
+        exec_rec.status = TaskStatus.failed
+        exec_rec.ended_at_ms = now_ms()
+        return worker_result  # type: ignore[possibly-undefined]
+
 
 async def run_generate(prompt: str) -> OrchestrationRun:
     return await CognitiveOrchestrationLoop().run(prompt=prompt)
+
+
+def _section_for(worker_type: WorkerType) -> str:
+    return {
+        WorkerType.backend: "Backend",
+        WorkerType.frontend: "Frontend",
+        WorkerType.file: "Configuration",
+        WorkerType.research: "Research",
+    }.get(worker_type, "Other")
 
 
 def _extract_section(markdown: str, title: str) -> str:
