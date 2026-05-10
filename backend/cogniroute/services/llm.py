@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import re
 from typing import Optional
 
 from app.settings import settings
 from ..llm import LlmCall, LlmResult, LlmRole, OpenAICompatibleClient
+
+def strip_thinking(text: str) -> str:
+    return re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
 
 
 SYSTEM_PROMPTS: dict[LlmRole, str] = {
@@ -110,4 +114,7 @@ async def call_model(
         max_tokens=ROLE_MAX_TOKENS.get(llm_role, 4096),
     )
     role_base_url = base_url or ROLE_ENDPOINTS[llm_role] or settings.openai_base_url
-    return await make_client(base_url=role_base_url).call_model(call=call)
+    result = await make_client(base_url=role_base_url).call_model(call=call)
+    
+    stripped_text = strip_thinking(result.text)
+    return LlmResult(text=stripped_text, meta=result.meta)

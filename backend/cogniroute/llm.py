@@ -34,11 +34,6 @@ class LlmCall:
     max_tokens: Optional[int] = None
 
 
-def _strip_thinking(text: str) -> str:
-    """Strip QwQ-style <think>...</think> reasoning blocks from model output."""
-    return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
-
-
 @dataclass(frozen=True)
 class LlmResult:
     text: str
@@ -116,7 +111,7 @@ class OpenAICompatibleClient(LlmClient):
             data = r.json()
         elapsed_ms = int((time.perf_counter() - started) * 1000)
 
-        text = _strip_thinking(data["choices"][0]["message"]["content"])
+        text = data["choices"][0]["message"]["content"]
         meta = {
             "role": call.role.value,
             "model": call.model,
