@@ -191,7 +191,8 @@ export default function HomePage() {
       const userMsg = { id: crypto.randomUUID(), role: "user" as const, content: prompt, at: Date.now() };
       setChat((c) => [...c, userMsg]);
 
-      const res = await fetch(process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:8000/run", {
+      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:8000";
+      const res = await fetch(`${backendUrl}/generate`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ prompt })
