@@ -20,6 +20,8 @@ from .schemas import (
     WorkerResult,
     WorkerType,
 )
+from .config import settings
+from .services.simulator import run_generate_simulation, run_generate_stream_simulation
 from .state_manager import StateManager
 from .telemetry.tracing import now_ms, span_end, span_start, trace_emit
 from .verifier_agent import VerifierAgent
@@ -511,11 +513,18 @@ class CognitiveOrchestrationLoop:
 
 
 async def run_generate(prompt: str) -> OrchestrationRun:
+    if settings.mock_mode or not settings.openai_base_url:
+        return await run_generate_simulation(prompt)
     return await CognitiveOrchestrationLoop().run(prompt=prompt)
 
 
 async def run_generate_stream(prompt: str) -> AsyncIterator[str]:
     """SSE-compatible generator that yields events as the orchestration progresses."""
+    if settings.mock_mode or not settings.openai_base_url:
+        async for event in run_generate_stream_simulation(prompt):
+            yield event
+        return
+
     queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
 
     async def enqueue_event(event: dict[str, Any]) -> None:
