@@ -5,11 +5,8 @@ from fastapi.responses import StreamingResponse
 from cogniroute.orchestration_loop import run_generate, run_generate_stream
 from cogniroute.schemas import GenerateRequest, GenerateResponse
 
-from .orchestrator import run_orchestration
-from .schemas import RunRequest, RunResponse
 
-
-app = FastAPI(title="CogniRoute Backend", version="0.1.0")
+app = FastAPI(title="CogniRoute Backend", version="0.2.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -25,6 +22,7 @@ def root():
     return {
         "name": "CogniRoute",
         "status": "online",
+        "version": "0.2.0",
         "endpoints": ["/health", "/generate", "/generate/stream", "/docs"],
     }
 
@@ -32,12 +30,6 @@ def root():
 @app.get("/health")
 def health():
     return {"ok": True}
-
-
-@app.post("/run", response_model=RunResponse)
-async def run(req: RunRequest):
-    run = await run_orchestration(req.prompt)
-    return RunResponse(run=run)
 
 
 @app.post("/generate", response_model=GenerateResponse)
