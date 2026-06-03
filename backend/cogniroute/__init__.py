@@ -1,6 +1,5 @@
 """
-CogniRoute backend (modular skeleton).
+CogniRoute — multi-agent AI code generation orchestrator.
 
-Phase 1 note: This package is additive and does not replace `backend/app/` yet.
+Architect → Workers → Verifier pipeline with retry loops and SSE streaming.
 """
-

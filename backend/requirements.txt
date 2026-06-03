@@ -2,7 +2,5 @@ fastapi
 uvicorn[standard]
 pydantic>=2
 pydantic-settings
-langgraph
 httpx
 python-dotenv
-

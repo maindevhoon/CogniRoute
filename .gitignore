@@ -2,6 +2,8 @@ __pycache__/
 *.pyc
 .env
 .env.*
+!.env.example
+!frontend/.env.example
 .venv
 backend/.venv
 state/telemetry.json

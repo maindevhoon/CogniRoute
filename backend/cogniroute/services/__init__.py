@@ -1,2 +1,1 @@
-"""Small services (LLM routing, config, registries)."""
-
+"""LLM routing and inference services."""

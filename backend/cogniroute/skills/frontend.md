@@ -16,7 +16,7 @@ These do NOT need to be imported — they are built-in:
 Date, Array, string, number, boolean, Promise, Response, Error, Map, Set, Record, Partial, Omit, Pick, Required, Readonly
 
 ## API Contract
-Backend runs at process.env.NEXT_PUBLIC_API_URL or http://localhost:7860
+Backend runs at process.env.NEXT_PUBLIC_BACKEND_URL or http://localhost:8000
 All endpoints return JSON. Data fetching pattern:
 
 ```tsx
