@@ -1,8 +1,21 @@
-# CogniRoute 🧠
+# CogniRoute 🧠 — Multi-Agent AI Code Generation Orchestrator
 
-CogniRoute is a multi-agent AI code generation orchestrator. Instead of generating one massive block of code, it breaks your request into a structured plan of individual files, generates each one with specialized LLM agents, and self-verifies the output with automatic retry on failure.
+CogniRoute is an advanced, production-ready multi-agent AI system designed to plan, generate, and self-verify complex software codebases. Instead of relying on a single "one-shot" LLM prompt that often introduces code syntax issues and placeholders, CogniRoute breaks the user request down into a structured task graph of individual files, generates them concurrently using specialized agents, and verifies them through a robust self-healing retry loop.
 
-## How it works
+---
+
+## 🚀 Key Features
+
+* **Multi-Agent Orchestration**: Scopes specialized roles (Architect, Worker, Verifier, Fixer) to act collaboratively like a professional engineering team.
+* **Self-Healing Loop**: The Verifier catches syntax issues, missing imports, and placeholder bodies, sending feedback back to Workers for automatic correction.
+* **Real-time Server-Sent Events (SSE)**: Streams pipeline status updates and generated code increments to the UI instantly.
+* **NVIDIA NIM Support**: Natively compatible with NVIDIA Inference Microservices (NIM) with support for model thinking/reasoning parameters.
+* **Zero-Config Simulation Fallback**: Runs a local, high-fidelity offline demonstration showing the full multi-agent loop with simulated self-healing at zero cost if no LLM keys are configured.
+* **Unified Vercel Monorepo Deployment**: Deploy both Next.js frontend and Python FastAPI backend on a single domain via native Vercel multi-service configurations.
+
+---
+
+## ⚙️ How It Works
 
 ```mermaid
 graph TD
@@ -21,108 +34,133 @@ graph TD
     J --> H
 ```
 
-Four agents under the hood:
+### The 4 Agents Under the Hood:
 
-1. **Architect** (32B) — Analyzes your prompt, reasons about architecture, and outputs a structured TaskGraph of files to generate.
-2. **Workers** (7B) — Each worker generates code for a single file, scoped to its task context + domain-specific skill injection.
-3. **Verifier** (32B) — Validates each file for real bugs (missing imports, syntax errors, empty functions). Files that fail get retried up to 9 times.
-4. **Fixer** (32B) — If the final cross-file consistency check fails, the fixer rewrites problematic files.
+1. **Architect (32B Reasoning Model)**: Takes the user prompt, drafts an architectural blueprint, and plans a dependency-aware `TaskGraph` listing every required file.
+2. **Workers (7B Coding Models)**: Generates the actual source code for a single file, utilizing domain-specific context injected from upstream dependencies.
+3. **Verifier (32B Code Reviewer)**: Tests each file for real runtime bugs. Rejected files are returned to the worker with details for correction (up to 9 retries).
+4. **Fixer (32B Refactoring Model)**: Runs a final cross-file validation check. If imports or connections are misaligned, the fixer refactors and glues the project together.
 
-## Project structure
+---
+
+## 📂 Project Structure
 
 ```
-├── backend/                    # FastAPI + Python 3.11
-│   ├── app/main.py             # HTTP layer (FastAPI endpoints)
-│   └── cogniroute/             # Core orchestration engine
-│       ├── orchestration_loop.py   # Main pipeline + SSE streaming
-│       ├── architect_agent.py      # Two-phase planning
-│       ├── code_worker.py          # Skill-injected code generation
-│       ├── verifier_agent.py       # Per-file + cross-file verification
-│       ├── fixer_agent.py          # Post-verification global fixer
-│       ├── services/llm.py         # Role-routed LLM inference
-│       ├── skills/                 # Markdown skill injections
-│       └── schemas/                # Pydantic models
+├── vercel.json                 # Vercel multi-service deployment settings
+├── backend/                    # Python FastAPI Backend
+│   ├── app/main.py             # FastAPI controller endpoints
+│   ├── cogniroute/             # Core Orchestration Engine
+│   │   ├── config.py           # Config settings (.env support)
+│   │   ├── orchestration_loop.py # Main loop & SSE logic
+│   │   ├── architect_agent.py  # Agent planning layer
+│   │   ├── code_worker.py      # Code generation worker
+│   │   ├── verifier_agent.py   # Code verification checks
+│   │   ├── fixer_agent.py      # Global post-refactoring fixer
+│   │   ├── services/
+│   │   │   ├── llm.py          # Model-routing client
+│   │   │   └── simulator.py    # Local demo simulation engine
+│   │   └── schemas/            # Pydantic data models
+│   └── requirements.txt        # Backend python dependencies
 │
-├── frontend/                   # Next.js 15 + React 19 + Tailwind v4
-│   └── app/page.tsx            # Real-time orchestration dashboard
+├── frontend/                   # React/Next.js Frontend UI
+│   ├── app/page.tsx            # OpenAI-style premium dashboard
+│   ├── app/globals.css         # Styling system (glassmorphism)
+│   └── next.config.js          # Next.js configurations
 │
-└── state/                      # Runtime state (generated plans + contracts)
+└── state/                      # Runtime state data
 ```
 
-## Running locally
+---
+
+## 🛠️ Running Locally
 
 You'll need Python 3.10+ and Node.js 18+.
 
 ### 1. Backend
 
-```bash
-cd backend
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+1. Navigate to the backend directory and set up a virtual environment:
+   ```bash
+   cd backend
+   python3 -m venv .venv
+   source .venv/bin/activate
+   pip install -r requirements.txt
+   ```
 
-# Copy and configure environment variables
-cp ../.env.example ../.env
-# Edit .env with your LLM endpoint details
+2. Configure environment variables. Copy the `.env.example` file to `.env` at the root directory:
+   ```bash
+   cp ../.env.example ../.env
+   ```
 
-uvicorn app.main:app --reload --port 8000
-```
+3. Launch the FastAPI server:
+   ```bash
+   uvicorn app.main:app --reload --port 8000
+   ```
 
 ### 2. Frontend
 
-```bash
-cd frontend
-npm install
+1. Navigate to the frontend directory and install packages:
+   ```bash
+   cd ../frontend
+   npm install
+   ```
 
-# Copy and configure environment variables
-cp .env.example .env.local
-# Edit .env.local if your backend is not at localhost:8000
+2. Start the Next.js development server:
+   ```bash
+   npm run dev
+   ```
 
-npm run dev
-```
+3. Open **[http://localhost:3000](http://localhost:3000)** in your browser.
 
-Open [http://localhost:3000](http://localhost:3000) to see the dashboard.
+---
 
-## Deployment
+## 🔌 Using NVIDIA NIM (Model Configuration)
 
-### Frontend (Vercel)
-
-1. Push to GitHub
-2. Import the repo in [Vercel](https://vercel.com)
-3. Set the **Root Directory** to `frontend`
-4. Add the environment variable `NEXT_PUBLIC_BACKEND_URL` pointing to your deployed backend
-5. Deploy
-
-### Backend (Docker)
+To route the multi-agent code generation through NVIDIA NIM endpoints, update your `.env` file at the root:
 
 ```bash
-docker build -t cogniroute-backend -f Dockerfile .
-docker run -p 8000:8000 \
-  -e COGNIROUTE_OPENAI_BASE_URL=https://your-llm-endpoint \
-  -e COGNIROUTE_OPENAI_API_KEY=your-key \
-  cogniroute-backend
+# NVIDIA NIM Endpoint
+COGNIROUTE_OPENAI_BASE_URL=https://integrate.api.nvidia.com/v1
+COGNIROUTE_OPENAI_API_KEY=nvapi-your-api-key-here
+
+# Recommended NVIDIA NIM Models (NIM Llama 3.3 Super Nemotron)
+COGNIROUTE_ARCHITECT_MODEL=nvidia/llama-3.3-nemotron-super-49b-v1
+COGNIROUTE_WORKER_MODEL=nvidia/llama-3.3-nemotron-super-49b-v1
+COGNIROUTE_VERIFIER_MODEL=nvidia/llama-3.3-nemotron-super-49b-v1
+
+# Large reasoning timeout
+COGNIROUTE_LLM_TIMEOUT_S=300
 ```
 
-## API
+### Fallback/Offline Simulation Mode:
+If `COGNIROUTE_OPENAI_BASE_URL` is commented out or missing from your `.env`, CogniRoute **automatically defaults to local simulation mode**. This generates realistic blueprints (e.g. for "Todo App", "Weather App", "Chat UI") and simulates planning and self-healing completely offline and for free.
 
-| Endpoint | Method | Description |
+---
+
+## ☁️ Deployment (Vercel Multi-Service)
+
+This repository is configured to deploy both frontend and backend automatically to a single Vercel project using the `vercel.json` configuration:
+
+1. Import your GitHub repository into **[Vercel](https://vercel.com)**.
+2. Select **Services** as the Framework Preset (Vercel will automatically read `vercel.json`).
+3. Add any desired environment variables (like `COGNIROUTE_OPENAI_API_KEY`) under **Settings -> Environment Variables**.
+4. Click **Deploy**. Vercel will mount the Next.js frontend at `/` and the FastAPI backend at `/_/backend/`.
+
+---
+
+## 📊 Environment Variables Reference
+
+| Variable | Description | Default |
 |---|---|---|
-| `/` | GET | Service info |
-| `/health` | GET | Health check |
-| `/generate` | POST | Synchronous — runs full pipeline, returns results |
-| `/generate/stream` | POST | SSE — streams orchestration events in real-time |
+| `COGNIROUTE_OPENAI_BASE_URL` | Base endpoint URL (OpenAI / vLLM / NVIDIA NIM) | `None` (Runs simulation fallback) |
+| `COGNIROUTE_OPENAI_API_KEY` | Auth Token for API gateway requests | `None` |
+| `COGNIROUTE_MOCK_MODE` | Forces offline simulator mode | `False` |
+| `COGNIROUTE_ARCHITECT_MODEL` | Model used for task graph planning | `Qwen/Qwen2.5-32B-Instruct` |
+| `COGNIROUTE_WORKER_MODEL` | Model used for file code generation | `Qwen/Qwen2.5-7B-Instruct` |
+| `COGNIROUTE_VERIFIER_MODEL` | Model used for syntax and QA verification | `Qwen/Qwen2.5-32B-Instruct` |
+| `NEXT_PUBLIC_BACKEND_URL` | Frontend client's backend connection URL | `http://localhost:8000` (local) / `/_/backend` (Vercel) |
 
-## Environment variables
+---
 
-| Variable | Required | Description |
-|---|---|---|
-| `COGNIROUTE_OPENAI_BASE_URL` | Yes | LLM endpoint (vLLM or OpenAI-compatible) |
-| `COGNIROUTE_OPENAI_API_KEY` | No | API key for the LLM endpoint |
-| `COGNIROUTE_ARCHITECT_BASE_URL` | No | Override endpoint for architect (32B) |
-| `COGNIROUTE_WORKER_BASE_URL` | No | Override endpoint for workers (7B) |
-| `COGNIROUTE_VERIFIER_BASE_URL` | No | Override endpoint for verifier (32B) |
-| `NEXT_PUBLIC_BACKEND_URL` | Yes (frontend) | Backend API URL |
+## 📄 License
 
-## License
-
-MIT
+MIT License. Free for educational showcases and portfolio presentations.
