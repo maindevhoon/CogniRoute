@@ -103,6 +103,12 @@ class OpenAICompatibleClient(LlmClient):
             ],
         }
 
+        # Enable thinking/reasoning parameters for NVIDIA NIM models
+        if "nvidia" in (call.model or "").lower() or (self._base_url and "nvidia" in self._base_url.lower()):
+            payload["chat_template_kwargs"] = {"enable_thinking": True}
+            payload["reasoning_budget"] = call.max_tokens or 4096
+            payload["max_tokens"] = max(payload["max_tokens"], 16384)
+
         started = time.perf_counter()
         url = f"{self._base_url}{self._path}"
         async with httpx.AsyncClient(timeout=self._timeout_s) as client:

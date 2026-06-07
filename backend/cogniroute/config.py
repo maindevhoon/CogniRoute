@@ -6,7 +6,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="COGNIROUTE_", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_prefix="COGNIROUTE_",
+        extra="ignore",
+        env_file=(".env", "../.env")
+    )
 
     # vLLM/OpenAI-compatible endpoints. Configure in deployment env vars.
     openai_base_url: Optional[str] = None
