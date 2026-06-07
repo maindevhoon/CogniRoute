@@ -100,11 +100,17 @@ async def call_model(
     """
 
     llm_role = _coerce_role(role)
+    model_name = {
+        LlmRole.architect: settings.architect_model,
+        LlmRole.worker: settings.worker_model,
+        LlmRole.verifier: settings.verifier_model,
+    }.get(llm_role, ROLE_MODELS[llm_role])
+
     call = LlmCall(
         role=llm_role,
         user_prompt=user_prompt,
         system_prompt=SYSTEM_PROMPTS[llm_role],
-        model=ROLE_MODELS[llm_role],
+        model=model_name,
         temperature=ROLE_TEMPERATURES[llm_role],
         json_schema_hint=json_schema_hint,
         max_tokens=ROLE_MAX_TOKENS.get(llm_role, 4096),
